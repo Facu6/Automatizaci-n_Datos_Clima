@@ -241,7 +241,7 @@ reemplazar_nulos(dfDesanidadoStruct_DaysHours_4)
 reemplazar_nulos(dfDesanidadoStruct_Current_Station_1)
 reemplazar_nulos(dfDesanidadoStruct_Stations_2)
 
-for key, df in dfDesanidadoStruct_Current_Station_1.items():
+for key, df in dfDesanidadoStruct_DaysHours_4.items():
         print(f'- DATAFRAME {key}:')
         df.show()
         
