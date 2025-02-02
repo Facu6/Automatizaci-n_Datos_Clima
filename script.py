@@ -24,11 +24,17 @@ params = {
 
 
 
-def obtener_api_key(file_path):
+
+json_file_path = 'metadata_ingestion.json'
+
+
+
+
+def obtener_api_key(file_path_key):
     
-    with open(file_path, 'r') as file:
+    with open(file_path_key, 'r') as file:
         return file.read().strip()
-    
+
 def extraer_datos_climaticos(url, params, api_key):
     
     locacion = params['locacion']
@@ -36,16 +42,17 @@ def extraer_datos_climaticos(url, params, api_key):
     url_final = f'{url}{locacion}/{fecha}?key={api_key}'
     
     try:
-        response = requests.get(url_final)
+        r = requests.get(url_final)
+        r_json = r.json()
         
-        if response.status_code == 200:
-            return response.json()
-        print('Los datos se extrajeron correctamente de la API')
+        if r.status_code == 200:
+            return r, r_json
         
     except requests.exceptions.RequestException as e:
             print(f'Error {e}')
             return None
-               
+        
+        
 def guardar_archivos_datos(data):
     
     directorio_actual = os.getcwd()
@@ -67,9 +74,8 @@ def guardar_archivos_datos(data):
             print(f'Archivo JSON guardado en: {ruta_archivos}')
                         
     except Exception as e:
-        print(f'Error al guardar los datos: {e}')      
-    
- 
+        print(f'Error al guardar los datos: {e}')  
+
 def obtener_ultimo_archivo(directorio, extension = '*.json'):
     
     '''
@@ -107,9 +113,6 @@ def obtener_ultimo_archivo(directorio, extension = '*.json'):
     except Exception as e:
         print(f'Error inesperado: {e}')
         raise
-
-
-
 
 def explotar_columnas_array(df, diccionario_resultado, sufijo_explode=None, columnas_target=None):
     
@@ -319,16 +322,68 @@ def eliminar_corchetes_array(diccionario_df, columna_nueva, columna_original, no
         print(f'Error en la eliminación de corchetes de columnas Array: {e}')
 
 
-def guardar_csv(df, ruta_csv):
+def guardar_csv(df, ruta_directorio, nombre_archivo_base):
     
     try:
-        df.to_csv(ruta_csv)
-        print(f'DataFrame guardado en ruta: {ruta_csv}')
+        os.makedirs(ruta_directorio, exist_ok=True)
+        
+        fecha_actual = datetime.now().strftime('%Y-%m-%d')
+        
+        nombre_archivo = f'{nombre_archivo_base}_{fecha_actual}.csv'
+
+        ruta_completa = os.path.join(ruta_directorio, nombre_archivo)
+    
+        df.to_csv(ruta_completa, index = False)
+        print(f'DataFrame guardado en ruta: {ruta_completa}')
     
     except Exception as e:
         print(f'Error en cargar el DataFrame de Pandas en formato CSV: {e}')
+     
+ 
+  
+def obtener_ultimo_valor():
     
+    try: 
+        with open(json_file_path) as json_file:
+            data_json = json.load(json_file)
+        
+        return data_json['table_name']
     
+    except Exception as e:
+        print(f'Error en obtener el último valor: {e}')
+
+
+def obtener_nuevo_valor(nuevo_valor):
+    
+    fecha_actual = datetime.now()
+    valor_formatoCorrecto = fecha_actual.strftime('%Y-%m-%d')
+    
+    return valor_formatoCorrecto      
+
+
+def actualizar_ultimo_valor(nuevo_valor):
+    
+    with open(json_file_path, '+r') as file_json:
+        data_json = json.load(file_json)
+        
+        data_json['table_name']['last_value'] = nuevo_valor
+        file_json.seek(0)  
+        json.dump(data_json, file_json, indent=4)
+
+
+def aplicar_extraccion_incremental(url, params, file_path_key):
+    
+    api_key = obtener_api_key(file_path_key)
+       
+    r, datos = extraer_datos_climaticos(url, params, api_key)
+    
+    nuevo_valor = datos['days'][0]['datetime']
+    nuevo_valor1 = obtener_nuevo_valor(nuevo_valor)
+    
+    actualizar_ultimo_valor(nuevo_valor1)
+    
+    return datos
+         
     
     
 
@@ -337,16 +392,27 @@ def guardar_csv(df, ruta_csv):
 
 
 # EXTRAER Y GUARDAR DATOS CRUDOS
-api_key = obtener_api_key('api_key.txt')
-data = extraer_datos_climaticos(url, params, api_key)
+
+url = 'https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/'
+
+params = {
+    'locacion' : 'Sicilia',
+    'fecha' : datetime.now().strftime('%Y-%m-%d')
+}
+
+# EXTRAER Y GUARDAR DATOS CRUDOS
+file_path_key = 'api_key.txt'
+data = aplicar_extraccion_incremental(url, params, file_path_key)
+
+data = extraer_datos_climaticos(url, params, file_path_key)
 guardar_archivos_datos(data)
 
 
 # PROCESAMIENTO DE DATOS
 data_dir = 'Datos'
 df = obtener_ultimo_archivo(data_dir, extension='.json')
- 
- 
+
+
 
 
 
@@ -405,15 +471,15 @@ dfPandas_DayHours = transformar_dfPandas(df_Days_Hours_Final)
 dfPandas_Original = transformar_dfPandas(df_original)
 
 # GUARDAR DF DE PANDAS EN FORMATO CSV
-guardar_csv(dfPandas_stations, 'Datos/Datos_Procesados/Stations.csv')
-guardar_csv(dfPandas_currentConditions, 'Datos/Datos_Procesados/CurrentConditions.csv')
-guardar_csv(dfPandas_Days, 'Datos/Datos_Procesados/Days.csv')
-guardar_csv(dfPandas_DayHours, 'Datos/Datos_Procesados/DaysHours.csv')
-guardar_csv(dfPandas_Original, 'Datos/Datos_Procesados/Original.csv')
+guardar_csv(dfPandas_stations, 'Datos/Datos_Procesados/Stations','Stations')
+guardar_csv(dfPandas_currentConditions, 'Datos/Datos_Procesados/CurrentConditions', 'CurrentConditions')
+guardar_csv(dfPandas_Days, 'Datos/Datos_Procesados/Days', 'Days')
+guardar_csv(dfPandas_DayHours, 'Datos/Datos_Procesados/DaysHours', 'DaysHours')
+guardar_csv(dfPandas_Original, 'Datos/Datos_Procesados/Original', 'Original')
 
 
-# 1 - VERIFICAR LOS NUEVOS DATOS DESCARGADOS PORQUÉ NO SE PUEDEN CARGAR A MYSQL
-# 2 -A LA HORA DE HACER EL DESANIDADO O EXPLOSION, CÓMO HACER PARA NO DETALLAR COLUMNAS EXPLICITAMENTE
-#   YA QUE EN CASO QUE SEAN OTRAS LAS COLUMNAS DARÁ ERROR
+
+# 1 - A LA HORA DE ELIMINAR CORCHETES (eliminar_corchetes_array), CÓMO HACER PARA NO DETALLAR COLUMNAS EXPLICITAMENTE
+#      YA QUE EN CASO QUE SEAN OTRAS LAS COLUMNAS DARÁ ERROR
 
 # 3 - APLICAR SEGURIDAD EN DATOS DE CONEXIÓN A MYSQL 
