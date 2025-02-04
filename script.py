@@ -1,12 +1,13 @@
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.types import StructType, StringType, ArrayType, IntegerType, LongType, DoubleType
-from pyspark.sql.functions import col, when, lit, array, struct, expr, explode, concat_ws
+from pyspark.sql.functions import col, when, lit, array, explode, concat_ws
 
+from dotenv import load_dotenv
+import pymysql
 import requests
 from datetime import datetime
 import os
 import json
-import pandas as pd
 
 
 spark = SparkSession.builder \
@@ -21,8 +22,6 @@ params = {
     'locacion' : 'Sicilia',
     'fecha' : datetime.now().strftime('%Y-%m-%d')
 }
-
-
 
 
 json_file_path = 'metadata_ingestion.json'
@@ -51,8 +50,7 @@ def extraer_datos_climaticos(url, params, api_key):
     except requests.exceptions.RequestException as e:
             print(f'Error {e}')
             return None
-        
-        
+           
 def guardar_archivos_datos(data):
     
     directorio_actual = os.getcwd()
@@ -114,53 +112,54 @@ def obtener_ultimo_archivo(directorio, extension = '*.json'):
         print(f'Error inesperado: {e}')
         raise
 
-def explotar_columnas_array(df, diccionario_resultado, sufijo_explode=None, columnas_target=None):
+def explotar_columnas_array(df, diccionario_resultado, sufijo_explode=None):
     
     try:
-        for columna in df.schema:
-            if isinstance(columna.dataType, ArrayType):
-                columna_nombre = columna.name
-                if columnas_target is None or columna_nombre in columnas_target:
-                    diccionario_resultado[columna_nombre] = df.select(explode(col(columna_nombre)).alias(f'{columna_nombre}'))
+        for campo in df.schema:
+            if isinstance(campo.dataType, ArrayType):
+                nombre_columna = campo.name
+                
+                alias = nombre_columna
+                diccionario_resultado[nombre_columna] = df.select(explode(col(nombre_columna)).alias(alias))
     
     except Exception as e:
         print(f'Error en la exploción de columnas: {e}')
             
-def desanidar_columnas_struct(df, diccionario_resultado, sufijo_desanidado=None, columnas_target=None):
+def desanidar_columnas_struct(df, diccionario_resultado, sufijo_desanidado=None):
     
     try:
-        for columna in df.schema:
-            if isinstance(columna.dataType, StructType):
-                columna_nombre = columna.name
-                if columnas_target is None or columna_nombre in columnas_target:
-
-                    campos_struct = [
+        for campo in df.schema:
+            if isinstance(campo.dataType, StructType):
+                columna_nombre = campo.name
+                
+                campos_struct = [
                         col(f'{columna_nombre}.{subfield.name}').alias(f'{columna_nombre}_{subfield.name}')
-                        for subfield in columna.dataType.fields
+                        for subfield in campo.dataType.fields
                     ]
-                    diccionario_resultado[columna_nombre] = df.select(*campos_struct)
+                
+                diccionario_resultado[columna_nombre] = df.select(*campos_struct)
                     
     except Exception as e:
         print(f'Error en el desanidado de columnas: {e}')
                     
-def aplicar_dataframe(metodo:str, diccionario_df, diccionario_dfResultado, sufijo=None, columnas_target=None):
+def aplicar_dataframe(metodo:str, diccionario_df, diccionario_dfResultado, sufijo=None):
     
     try:
         if metodo == 'explotar':
             if isinstance(diccionario_df, DataFrame):
-                explotar_columnas_array(diccionario_df, diccionario_dfResultado, sufijo, columnas_target)
+                explotar_columnas_array(diccionario_df, diccionario_dfResultado, sufijo)
             
             elif isinstance(diccionario_df, dict):
                 for key, df in diccionario_df.items():
-                    explotar_columnas_array(df, diccionario_dfResultado, sufijo, columnas_target)
+                    explotar_columnas_array(df, diccionario_dfResultado, sufijo)
         
         elif metodo == 'desanidar':
             if isinstance(diccionario_df, DataFrame):
-                desanidar_columnas_struct(diccionario_df, diccionario_dfResultado, sufijo, columnas_target)
+                desanidar_columnas_struct(diccionario_df, diccionario_dfResultado, sufijo)
             
             elif isinstance(diccionario_df, dict):
                 for key, df in diccionario_df.items():
-                    desanidar_columnas_struct(df, diccionario_dfResultado, sufijo, columnas_target)
+                    desanidar_columnas_struct(df, diccionario_dfResultado, sufijo)
     
     except Exception as e:
         print(f'Error en la ejecución de la función principal de exploción y desanidado de columnas: {e}')
@@ -281,46 +280,55 @@ def eliminar_columna(diccionario_df, nombre_columna, nombre_dataframe=None):
             
     
     except Exception as e:
-        print(f'Error en la eliminación de columna "{nombre_columna}" del DataFrame "{nombre_dataframe}: {e}"')
-        
+        print(f'Error en la eliminación de columna "{nombre_columna}" del DataFrame "{nombre_dataframe}: {e}"')    
 
-def eliminar_corchetes_array(diccionario_df, columna_nueva, columna_original, nombre_dataframe=None):
+def eliminar_corchetes_array(diccionario_df, nombre_dataframe=None):
     
     try:
-        if nombre_dataframe:
-            if isinstance(columna_nueva, list) and isinstance(columna_original, list):
-                df = diccionario_df[nombre_dataframe]
-                
-                for nuevo, orig in zip(columna_nueva, columna_original):
-                    df = df.withColumn(nuevo, concat_ws(', ', orig)).drop(orig)
+        if isinstance(diccionario_df, DataFrame):
             
-                print(f'Corchetes eliminados de columna "{columna_original}" del DataFrame "{nombre_dataframe}".')
-                return df
-            
-            else:
-                df = diccionario_df[nombre_dataframe]
-                df = df.withColumn(columna_nueva, concat_ws(', ', columna_original)).drop(columna_original)
-                
-                print(f'Corchetes eliminados de columna "{columna_original}" del DataFrame "{nombre_dataframe}".')
-                return df 
-        else:
-            if isinstance(columna_nueva, list) and isinstance(columna_original, list):
-                
-                for nuevo, orig in zip(columna_nueva, columna_original):
-                    diccionario_df = diccionario_df.withColumn(nuevo, concat_ws(', ', orig)).drop(orig)
-            
-                print(f'Corchetes eliminados de columna "{columna_original}" del DataFrame (no diccionario).')
-                return diccionario_df
-            
-            else:
-                diccionario_df = diccionario_df.withColumn(columna_nueva, concat_ws(', ', columna_original)).drop(columna_original)       
-                
-                print(f'Corchetes eliminados de columna "{columna_original}" del DataFrame (no diccionario).')
-                return diccionario_df
-    
-    except Exception as e:
-        print(f'Error en la eliminación de corchetes de columnas Array: {e}')
+            columnas_array = [columna.name for columna in diccionario_df.schema.fields if isinstance(columna.dataType, ArrayType)]
 
+            if columnas_array:
+                for columna in columnas_array:
+                    diccionario_df = diccionario_df.withColumn(columna, concat_ws(', ', col(columna)))
+                
+                print(f'Corchetes eliminados de columna "{columna}" del DataFrame "{nombre_dataframe}" (no era diccionario).')
+            else:
+                print(f'No se encontraron columnas tipo Array en el DataFrame "{nombre_dataframe}".')
+        
+        
+        elif nombre_dataframe:
+            
+            df = diccionario_df[nombre_dataframe]
+            
+            columnas_array = [columna.name for columna in df.schema.fields if isinstance(columna.dataType, ArrayType)]
+            
+            if columnas_array:
+                for columna in columnas_array:
+                    df = df.withColumn(columna, concat_ws(', ', col(columna)))
+                
+                print(f'Corchetes eliminados de columna "{columna}" del DataFrame "{nombre_dataframe}".')
+                diccionario_df[nombre_dataframe] = df
+            else:
+                print(f'No se encontraron columnas tipo Array en el DataFrame "{nombre_dataframe}".')
+        
+        else:
+            for key, df in diccionario_df.items():
+                columnas_array = [columna.name for columna in df.schema.fields if isinstance(columna.dataType, ArrayType)]
+                
+                if columnas_array:
+                    for columna in columnas_array:
+                        df = df.withColumn(columna, concat_ws(', ', col(columna)))
+        
+                print(f'Corchetes eliminados de columna "{columna}" del DataFrame "{nombre_dataframe}".')
+                diccionario_df[nombre_dataframe] = df
+            else:
+                print(f'No se encontraron columnas tipo Array en el DataFrame "{nombre_dataframe}".')
+        
+        return diccionario_df
+    except Exception as e:
+        print(f'Error en la eliminación de corchetes de columnas Array, Dataframe: {e}')     
 
 def guardar_csv(df, ruta_directorio, nombre_archivo_base):
     
@@ -339,8 +347,6 @@ def guardar_csv(df, ruta_directorio, nombre_archivo_base):
     except Exception as e:
         print(f'Error en cargar el DataFrame de Pandas en formato CSV: {e}')
      
- 
-  
 def obtener_ultimo_valor():
     
     try: 
@@ -352,14 +358,12 @@ def obtener_ultimo_valor():
     except Exception as e:
         print(f'Error en obtener el último valor: {e}')
 
-
 def obtener_nuevo_valor(nuevo_valor):
     
     fecha_actual = datetime.now()
     valor_formatoCorrecto = fecha_actual.strftime('%Y-%m-%d')
     
     return valor_formatoCorrecto      
-
 
 def actualizar_ultimo_valor(nuevo_valor):
     
@@ -369,7 +373,6 @@ def actualizar_ultimo_valor(nuevo_valor):
         data_json['table_name']['last_value'] = nuevo_valor
         file_json.seek(0)  
         json.dump(data_json, file_json, indent=4)
-
 
 def aplicar_extraccion_incremental(url, params, file_path_key):
     
@@ -385,13 +388,8 @@ def aplicar_extraccion_incremental(url, params, file_path_key):
     return datos
          
     
-    
 
-
-
-
-
-# EXTRAER Y GUARDAR DATOS CRUDOS
+# DATOS PARA EXTRACCIÓN DESDE API
 
 url = 'https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/'
 
@@ -404,16 +402,13 @@ params = {
 file_path_key = 'api_key.txt'
 data = aplicar_extraccion_incremental(url, params, file_path_key)
 
-data = extraer_datos_climaticos(url, params, file_path_key)
+#data = extraer_datos_climaticos(url, params, file_path_key)
 guardar_archivos_datos(data)
 
 
 # PROCESAMIENTO DE DATOS
 data_dir = 'Datos'
 df = obtener_ultimo_archivo(data_dir, extension='.json')
-
-
-
 
 
 dfExplodedArray_Alerts_Days_1 = {}
@@ -426,25 +421,14 @@ dfDesanidadoStruct_Current_Station_1 = {}
 dfDesanidadoStruct_Stations_2 = {}
 
 
-columnas_array_1 = ['alerts', 'days']
-columnas_struct_1 = ['currentConditions', 'stations']
+aplicar_dataframe('explotar', df, dfExplodedArray_Alerts_Days_1)
+aplicar_dataframe('desanidar', df, dfDesanidadoStruct_Current_Station_1)
+aplicar_dataframe('desanidar', dfExplodedArray_Alerts_Days_1, dfDesanidadoStruct_Days_2)
+aplicar_dataframe('explotar', dfDesanidadoStruct_Days_2, dfExplodeArray_DaysHours_DayStation_3)
+aplicar_dataframe('desanidar', dfExplodeArray_DaysHours_DayStation_3, dfDesanidadoStruct_DaysHours_4)
+aplicar_dataframe('desanidar', dfDesanidadoStruct_Current_Station_1, dfDesanidadoStruct_Stations_2)
 
-columnas_struct_2 = ['days']
-columnas_array_2 = ['days_hours', 'days_stations']
-
-columnas_struct_3 = ['days_hours']
-
-columnas_struct_4 = {'stations_C6242', 'stations_D2770', 'stations_LICJ', 'stations_LICT'}
-
-
-aplicar_dataframe('explotar', df, dfExplodedArray_Alerts_Days_1, 'explode1', columnas_array_1)
-aplicar_dataframe('desanidar', df, dfDesanidadoStruct_Current_Station_1, 'desanidar1', columnas_struct_1)
-aplicar_dataframe('desanidar', dfExplodedArray_Alerts_Days_1, dfDesanidadoStruct_Days_2, 'desanidar2', columnas_struct_2)
-aplicar_dataframe('explotar', dfDesanidadoStruct_Days_2, dfExplodeArray_DaysHours_DayStation_3, 'desanidar2', columnas_array_2)
-aplicar_dataframe('desanidar', dfExplodeArray_DaysHours_DayStation_3, dfDesanidadoStruct_DaysHours_4, 'desanidar2', columnas_struct_3)
-aplicar_dataframe('desanidar', dfDesanidadoStruct_Current_Station_1, dfDesanidadoStruct_Stations_2, 'desanidar2', columnas_struct_4)
-
-
+# REEMPLAZO DE NULOS
 reemplazar_nulos(dfExplodedArray_Alerts_Days_1)
 reemplazar_nulos(dfDesanidadoStruct_Days_2)
 reemplazar_nulos(dfExplodeArray_DaysHours_DayStation_3)
@@ -452,25 +436,26 @@ reemplazar_nulos(dfDesanidadoStruct_DaysHours_4)
 reemplazar_nulos(dfDesanidadoStruct_Current_Station_1)
 reemplazar_nulos(dfDesanidadoStruct_Stations_2)
 
-# ELIMINACIÓN DE COLUMNAS STRUCT/ARRAY
+# # ELIMINACIÓN DE COLUMNAS STRUCT/ARRAY
 df_Days_2_eliminacionColumna = eliminar_columna(dfDesanidadoStruct_Days_2, 'days_hours', 'days')
 df_original = eliminar_columna(df, ['alerts', 'currentConditions', 'days', 'stations'])
 
-# ELIMINACIÓN DE CORCHETES DE COLUMNAS ARRAY
-df_Days_2_Final = eliminar_corchetes_array(df_Days_2_eliminacionColumna, ['days_preciptype1', 'days_stations1'], ['days_preciptype', 'days_stations'])
-df_Days_Hours_Final = eliminar_corchetes_array(dfDesanidadoStruct_DaysHours_4, ['days_hours_preciptype1', 'days_hours_stations1'], ['days_hours_preciptype', 'days_hours_stations'], 'days_hours')
-df_currentConditions_Final = eliminar_corchetes_array(dfDesanidadoStruct_Current_Station_1, 'currentConditions_stations1', 'currentConditions_stations', 'currentConditions')
+# # ELIMINACIÓN DE CORCHETES DE COLUMNAS ARRAY
+df_Days_2_Final = eliminar_corchetes_array(df_Days_2_eliminacionColumna)
+df_Days_Hours_Final = eliminar_corchetes_array(dfDesanidadoStruct_DaysHours_4, 'days_hours')
+df_currentConditions_Final = eliminar_corchetes_array(dfDesanidadoStruct_Current_Station_1, 'currentConditions')
+
 # UNIFICACIONES
 dfUnificado_stations = unificar_df(dfDesanidadoStruct_Stations_2)
 
-# TRANSFORMACIONES A PANDAS
+# # TRANSFORMACIONES A PANDAS
 dfPandas_stations = transformar_dfPandas(dfUnificado_stations)
-dfPandas_currentConditions = transformar_dfPandas(df_currentConditions_Final)
+dfPandas_currentConditions = transformar_dfPandas(df_currentConditions_Final, 'currentConditions')
 dfPandas_Days = transformar_dfPandas(df_Days_2_Final)
-dfPandas_DayHours = transformar_dfPandas(df_Days_Hours_Final)
+dfPandas_DayHours = transformar_dfPandas(df_Days_Hours_Final, 'days_hours')
 dfPandas_Original = transformar_dfPandas(df_original)
 
-# GUARDAR DF DE PANDAS EN FORMATO CSV
+# # GUARDAR DF DE PANDAS EN FORMATO CSV
 guardar_csv(dfPandas_stations, 'Datos/Datos_Procesados/Stations','Stations')
 guardar_csv(dfPandas_currentConditions, 'Datos/Datos_Procesados/CurrentConditions', 'CurrentConditions')
 guardar_csv(dfPandas_Days, 'Datos/Datos_Procesados/Days', 'Days')
@@ -479,7 +464,212 @@ guardar_csv(dfPandas_Original, 'Datos/Datos_Procesados/Original', 'Original')
 
 
 
-# 1 - A LA HORA DE ELIMINAR CORCHETES (eliminar_corchetes_array), CÓMO HACER PARA NO DETALLAR COLUMNAS EXPLICITAMENTE
-#      YA QUE EN CASO QUE SEAN OTRAS LAS COLUMNAS DARÁ ERROR
+# CARGA DE DATOS A MYSQL
+load_dotenv()
+user = os.environ.get('MYSQL_USER')
+password = os.environ.get('MYSQL_PASSWORD')
+host = os.environ.get('MYSQL_HOST')
+database = os.environ.get('MYSQL_DATABASE')
+port = int(os.environ.get('MYSQL_PORT', 3306))
 
-# 3 - APLICAR SEGURIDAD EN DATOS DE CONEXIÓN A MYSQL 
+
+def insertar_datos_a_tabla(cursor, tabla, columnas, datos):
+    
+    try:
+        placeholders = ', '.join(['%s'] * len(columnas))
+        insert_query = f"INSERT INTO {tabla} ({', '.join(columnas)}) VALUES ({placeholders})"
+
+        cursor.executemany(insert_query, datos)
+        print(f'Datos insertados correctamente en la tabla {tabla}.')
+
+    except Exception as e:
+        print(f'Error en la inserción de datos: "{tabla}" / {e}')
+
+def crear_tablas(cursor):
+    
+    try:
+        tablas = [
+            ''' 
+            CREATE TABLE IF NOT EXISTS city (
+                id_city INT AUTO_INCREMENT PRIMARY KEY,
+                address VARCHAR(50),
+                description VARCHAR(300),
+                latitude FLOAT,
+                longitude FLOAT,
+                queryCost INT, 
+                resolvedAddress VARCHAR(100),
+                timezone VARCHAR(100),
+                tzoffset FLOAT
+            );
+            ''',
+            ''' 
+            CREATE TABLE IF NOT EXISTS stations (
+               id_stations INT AUTO_INCREMENT PRIMARY KEY,
+               contribution FLOAT,
+               distance FLOAT,
+               id VARCHAR(15),
+               latitude FLOAT,
+               longitude FLOAT,
+               name VARCHAR(50),
+               quality INT,
+               useCount INT
+            );
+            ''',
+            '''
+            CREATE TABLE IF NOT EXISTS current_conditions (
+            id_currentConditions INT AUTO_INCREMENT PRIMARY KEY,
+            currentConditions_cloudcover FLOAT,
+            currentConditions_conditions VARCHAR(250),
+            currentConditions_datetime TIME,
+            currentConditions_datetimeEpoch INT, 
+            currentConditions_dew FLOAT,
+            currentConditions_feelslike FLOAT,
+            currentConditions_humidity FLOAT,
+            currentConditions_icon VARCHAR(100),
+            currentConditions_moonphase FLOAT,
+            currentConditions_precip FLOAT,
+            currentConditions_precipprob FLOAT,
+            currentConditions_preciptype VARCHAR(100),
+            currentConditions_pressure FLOAT,
+            currentConditions_snow FLOAT, 
+            currentConditions_snowdepth FLOAT,
+            currentConditions_solarenergy FLOAT,
+            currentConditions_solarradiation FLOAT,
+            currentConditions_source VARCHAR(50),
+            currentConditions_stations VARCHAR(100),
+            currentConditions_sunrise TIME,
+            currentConditions_sunriseEpoch INT, 
+            currentConditions_sunset TIME,
+            currentConditions_sunsetEpoch INT,
+            currentConditions_temp FLOAT,
+            currentConditions_uvindex FLOAT, 
+            currentConditions_visibility FLOAT,
+            currentConditions_winddir FLOAT,
+            currentConditions_windgust FLOAT, 
+            currentConditions_windspeed FLOAT
+            );
+            ''',
+            ''' 
+            CREATE TABLE IF NOT EXISTS days (
+                id_days INT AUTO_INCREMENT PRIMARY KEY,
+                days_cloudcover FLOAT,
+                days_conditions VARCHAR(200),
+                days_datetime DATE,
+                days_datetimeEpoch INT,
+                days_description VARCHAR(200),
+                days_dew FLOAT,
+                days_feelslike FLOAT,
+                days_feelslikemax FLOAT, 
+                days_feelslikemin FLOAT, 
+                days_humidity FLOAT, 
+                days_icon VARCHAR(50),
+                days_moonphase FLOAT, 
+                days_precip FLOAT, 
+                days_precipcover FLOAT, 
+                days_precipprob FLOAT,
+                days_preciptype VARCHAR(50),
+                days_pressure FLOAT, 
+                days_severerisk FLOAT, 
+                days_snow FLOAT, 
+                days_snowdepth FLOAT, 
+                days_solarenergy FLOAT,
+                days_solarradiation FLOAT,
+                days_source VARCHAR(50),
+                days_stations VARCHAR(200),
+                days_sunrise TIME,
+                days_sunriseEpoch INT,
+                days_sunset TIME,
+                days_sunsetEpoch INT,
+                days_temp FLOAT, 
+                days_tempmax FLOAT,
+                days_tempmin FLOAT,
+                days_uvindex FLOAT,
+                days_visibility FLOAT,
+                days_winddir FLOAT,
+                days_windgust FLOAT,
+                days_windspeed FLOAT
+            );
+            ''',
+            ''' 
+            CREATE TABLE IF NOT EXISTS days_hours (
+                id_days INT AUTO_INCREMENT PRIMARY KEY,
+                days_hours_cloudcover FLOAT,
+                days_hours_conditions VARCHAR(200),
+                days_hours_datetime TIME,
+                days_hours_datetimeEpoch INT, 
+                days_hours_dew FLOAT,
+                days_hours_feelslike FLOAT,
+                days_hours_humidity FLOAT,
+                days_hours_icon VARCHAR(200),
+                days_hours_precip FLOAT,
+                days_hours_precipprob FLOAT,
+                days_hours_preciptype VARCHAR(200),
+                days_hours_pressure FLOAT,
+                days_hours_severerisk FLOAT,
+                days_hours_snow FLOAT,
+                days_hours_snowdepth FLOAT,
+                days_hours_solarenergy FLOAT,
+                days_hours_solarradiation FLOAT,
+                days_hours_source VARCHAR(50),
+                days_hours_stations VARCHAR(200),
+                days_hours_temp FLOAT,
+                days_hours_uvindex FLOAT,
+                days_hours_visibility FLOAT,
+                days_hours_winddir FLOAT,
+                days_hours_windgust FLOAT,
+                days_hours_windspeed FLOAT
+            );
+            '''
+        ]
+        
+        for query in tablas:
+            cursor.execute(query)
+    
+    except Exception as e:
+        print(f'Error en la creación de tablas: {e}')
+
+def main():
+    
+    print('Intentando conexión a MySQL.')
+    
+    try:
+        conexion = pymysql.connect(user= user, password= password,
+                                        host= host,   
+                                        database = database,
+                                        port = port)
+        print("Conexión exitosa")
+    
+        cursor = conexion.cursor()
+        
+        crear_tablas(cursor)
+        
+        dataframes = {
+            'stations' : dfPandas_stations,
+            'current_conditions' : dfPandas_currentConditions,
+            'days' : dfPandas_Days,
+            'days_hours' : dfPandas_DayHours,
+            'city' : dfPandas_Original
+        }
+        
+        for tabla, df in dataframes.items():
+            
+            columnas = df.columns.tolist()
+            datos = [tuple(row) for row in df.values]
+        
+            insertar_datos_a_tabla(cursor, tabla, columnas, datos)
+        
+        conexion.commit()
+        print('Datos insertados exitosamente')
+    
+    except Exception as e:
+        print(f'Error en la conexión: {e}')
+        
+    finally: 
+        conexion.close()
+        print('Conexión cerrada con éxito.')
+
+main()
+
+
+# 1 - COMPRENDER EL MAPEO DE DF DE PANDAS PARA PODER REALIZAR LA CARGA A MYSQL
+#     YA QUE A LA HORA DE DETALLAR EL ESQUEMA DE LAS TABLAS, NO CORRESPONDERÍA CON LOS DF PROPORCIONADOS EN REFERENCIA A LAS FOREIGN KEY
