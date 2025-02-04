@@ -50,29 +50,7 @@ def extraer_datos_climaticos(url, params, api_key):
     except requests.exceptions.RequestException as e:
             print(f'Error {e}')
             return None
-        
-def obtener_api_key(file_path_key):
-    
-    with open(file_path_key, 'r') as file:
-        return file.read().strip()
-
-def extraer_datos_climaticos(url, params, api_key):
-    
-    locacion = params['locacion']
-    fecha = params['fecha']
-    url_final = f'{url}{locacion}/{fecha}?key={api_key}'
-    
-    try:
-        r = requests.get(url_final)
-        r_json = r.json()
-        
-        if r.status_code == 200:
-            return r, r_json
-        
-    except requests.exceptions.RequestException as e:
-            print(f'Error: {e}')
-            return None
-        
+           
 def guardar_archivos_datos(data):
     
     directorio_actual = os.getcwd()
@@ -424,7 +402,7 @@ params = {
 file_path_key = 'api_key.txt'
 data = aplicar_extraccion_incremental(url, params, file_path_key)
 
-data = extraer_datos_climaticos(url, params, file_path_key)
+#data = extraer_datos_climaticos(url, params, file_path_key)
 guardar_archivos_datos(data)
 
 
@@ -511,6 +489,19 @@ def crear_tablas(cursor):
     
     try:
         tablas = [
+            ''' 
+            CREATE TABLE IF NOT EXISTS city (
+                id_city INT AUTO_INCREMENT PRIMARY KEY,
+                address VARCHAR(50),
+                description VARCHAR(300),
+                latitude FLOAT,
+                longitude FLOAT,
+                queryCost INT, 
+                resolvedAddress VARCHAR(100),
+                timezone VARCHAR(100),
+                tzoffset FLOAT
+            );
+            ''',
             ''' 
             CREATE TABLE IF NOT EXISTS stations (
                id_stations INT AUTO_INCREMENT PRIMARY KEY,
@@ -628,19 +619,6 @@ def crear_tablas(cursor):
                 days_hours_windgust FLOAT,
                 days_hours_windspeed FLOAT
             );
-            ''',
-            ''' 
-            CREATE TABLE IF NOT EXISTS city (
-                id_city INT AUTO_INCREMENT PRIMARY KEY,
-                address VARCHAR(50),
-                description VARCHAR(300),
-                latitude FLOAT,
-                longitude FLOAT,
-                queryCost INT, 
-                resolvedAddress VARCHAR(100),
-                timezone VARCHAR(100),
-                tzoffset FLOAT
-            );
             '''
         ]
         
@@ -692,3 +670,6 @@ def main():
 
 main()
 
+
+# 1 - COMPRENDER EL MAPEO DE DF DE PANDAS PARA PODER REALIZAR LA CARGA A MYSQL
+#     YA QUE A LA HORA DE DETALLAR EL ESQUEMA DE LAS TABLAS, NO CORRESPONDERÍA CON LOS DF PROPORCIONADOS EN REFERENCIA A LAS FOREIGN KEY
