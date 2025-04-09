@@ -138,5 +138,5 @@ SELECT * FROM nombre_de_tu_tabla;
 **Facundo Dispenza**  
 Ingeniero y Analista de Datos.
 
-- [LinkedIn](www.linkedin.com/in/facundo-dispenza)
+- [LinkedIn](https://www.linkedin.com/in/facundo-dispenza)
 - [GitHub](https://github.com/Facu6)
