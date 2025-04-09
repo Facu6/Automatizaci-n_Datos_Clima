@@ -1,0 +1,19 @@
+# Airflow
+apache-airflow==2.8.1
+apache-airflow-providers-smtp==3.5.0
+apache-airflow-providers-cncf-kubernetes==7.8.0 # Si llegás a usar K8s
+
+# PySpark
+pyspark==3.4.1
+
+# MySQL Client
+PyMySQL==1.1.0
+
+# Pandas
+pandas==2.2.1
+
+# Requests para conexión a APIs externas
+requests==2.31.0
+
+# dotenv para manejo de variables de entorno
+python-dotenv==1.0.1
